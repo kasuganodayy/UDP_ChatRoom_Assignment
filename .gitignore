@@ -118,6 +118,7 @@ ClientBin/
 *.pfx
 *.publishsettings
 *.opendb
+*.VC.db
 
 # RIA/Silverlight projects
 Generated_Code/
