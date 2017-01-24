@@ -93,8 +93,13 @@ BOOL CALLBACK DialogProc(	HWND hwndDlg,		// handle to dialog box
 				{
 					if (startUdpChat_Server())
 					{
-						// Disable SRVSTART button
+						// Disable buttons
 						EnableWindow(GetDlgItem(hwndDlg, IDC_SRVSTART), false);
+						EnableWindow(GetDlgItem(hwndDlg, IDSTART), false);
+						EnableWindow(GetDlgItem(hwndDlg, IDC_SRVMODEPORT), false);
+						EnableWindow(GetDlgItem(hwndDlg, IDC_SERVERIP), false);
+						EnableWindow(GetDlgItem(hwndDlg, IDC_SERVERPORT), false);
+						EnableWindow(GetDlgItem(hwndDlg, IDC_NAME), false);
 
 						char txt[256];
 

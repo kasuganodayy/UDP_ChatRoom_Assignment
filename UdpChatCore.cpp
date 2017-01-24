@@ -37,6 +37,7 @@ HWND g_hwnd;
 SOCKET g_mysock;
 sockaddr_in g_myaddr;
 sockaddr_in g_toaddr;
+int g_myUserId;
 
 thread g_recvThread;
 
@@ -57,8 +58,10 @@ map <int, string> userTable;
 void recvThread_Server(void);
 void recvThread_Client(void);
 
+void setMessageToBuffer(LPSrvMsg msg, LPChatBuffer buffer);
 void setMessageToBuffer(LPChatMsgData msg, LPChatBuffer buffer);
 void makeChatString(LPChatBuffer buffer, int userId, char* message);
+void makeChatString(LPChatBuffer buffer, char* name, char* message);
 void insertData(LPChatBuffer chat_buff);
 void deleteChatData(LPChatBuffer buffer);
 void requestLogin(char* name);
@@ -145,6 +148,16 @@ void setMessageToBuffer(LPSrvMsg msg, LPChatBuffer buffer)
 
 }
 
+void setMessageToBuffer(LPChatMsgData msg, LPChatBuffer buffer)
+{
+	if (msg->msg.ChatBody.name == NULL || msg->msg.ChatBody.message == NULL)
+	{
+		return;
+	}
+
+	makeChatString(buffer, msg->msg.ChatBody.name, msg->msg.ChatBody.message);
+}
+
 void makeChatString(LPChatBuffer buffer, int userId, char* message)
 {
 	int size = 0;
@@ -158,6 +171,20 @@ void makeChatString(LPChatBuffer buffer, int userId, char* message)
 
 	strcpy_s(buffer->chat_string, size + 1, temp_buffer);
 
+}
+
+void makeChatString(LPChatBuffer buffer, char* name, char* message)
+{
+	int size = 0;
+	char temp_buffer[512];
+
+	size = sprintf_s(temp_buffer, "%s: %s \r\n", name, message);
+	temp_buffer[size] = NULL;
+
+	buffer->buff_size = size + 1;
+	buffer->chat_string = (char*)malloc(sizeof(char) * (size + 1));
+
+	strcpy_s(buffer->chat_string, size + 1, temp_buffer);
 }
 
 void deleteChatData(LPChatBuffer buffer)
@@ -207,11 +234,12 @@ void recvThread_Server(void)
 			break;
 
 		case SRVTYPE_LOGIN:
+			g_sendbuff.msg.Header.type = MSGTYPE_ACCEPT;
+
 			if (strlen(recvbuff.msg.Login.name) > NAME_LENGTH)
 			{
 				// Reject login
 				g_sendbuff.msg.AcceptBody.userId = -1;
-				g_sendbuff.msg.Header.type = MSGTYPE_ACCEPT;
 			}
 			else
 			{
@@ -222,8 +250,7 @@ void recvThread_Server(void)
 
 					if (userGenCount > 100)
 					{
-						g_sendbuff.msg.AcceptBody.userId = -1;
-						g_sendbuff.msg.Header.type = MSGTYPE_ACCEPT;
+						tempID = -1;
 						strcpy(g_sendbuff.msg.ChatBody.message, "UserID attempts over-count.");
 						break;
 					}
@@ -231,6 +258,10 @@ void recvThread_Server(void)
 					tempID = rand();
 					userGenCount++;
 				}
+
+				g_sendbuff.msg.AcceptBody.userId = tempID;
+
+				sendDataTo(g_mysock, g_sendbuff.data, sizeof(g_sendbuff.data), (sockaddr*)&fromaddr);
 			}
 			break;
 
@@ -259,6 +290,38 @@ void recvThread_Client(void)
 		switch (recvBuff.msg.Header.type)
 		{
 		case MSGTYPE_CHAT:
+			message_data = (LPChatBuffer)malloc(sizeof(ChatBuffer));
+
+			// Allocate memory and set CharBuffer
+			setMessageToBuffer(&recvBuff, message_data);
+
+			insertData(message_data);
+			deleteChatData(message_data);
+			break;
+
+		case MSGTYPE_ACCEPT:
+			g_myUserId = recvBuff.msg.AcceptBody.userId;
+
+			if ( g_myUserId == -1)
+			{
+				// Login rejected
+				g_mainloop = false;
+
+				char errTxt[256];
+				sprintf_s(errTxt, "ERROR: %s", recvBuff.msg.ChatBody.message);
+				SendMessage(GetDlgItem(g_hwnd, IDC_MESSAGELIST), LB_INSERTSTRING, (WPARAM)0, (LPARAM)errTxt);
+
+				if (g_recvThread.joinable())
+					g_recvThread.join();
+			}
+			else
+			{
+				EnableWindow(GetDlgItem(g_hwnd, IDC_SRVSTART), false);
+				EnableWindow(GetDlgItem(g_hwnd, IDSTART), false);
+				EnableWindow(GetDlgItem(g_hwnd, IDC_CHATINPUT), true);
+				EnableWindow(GetDlgItem(g_hwnd, IDC_MESSAGELIST), true);
+				EnableWindow(GetDlgItem(g_hwnd, IDC_SEND), true);
+			}
 			break;
 		}
 	}
@@ -296,12 +359,13 @@ bool startUdpChat_Client(char* name)
 
 void sendChatMessage(char* chat)
 {
+	SrvMsg sendbuff;
 	// Send chatBuffer as chatMode
-	g_sendbuff.msg.Header.type = MSGTYPE_CHAT;
+	sendbuff.msg.Header.type = SRVTYPE_CHAT;
 	// Copy content
-	strcpy_s(g_sendbuff.msg.ChatBody.message, CHAT_LENGTH, chat);
+	strcpy_s(sendbuff.msg.ChatBody.message, CHAT_LENGTH, chat);
 
-	sendDataTo(g_mysock, g_sendbuff.data, sizeof(g_sendbuff.data), (sockaddr*)&g_toaddr);
+	sendDataTo(g_mysock, sendbuff.data, sizeof(sendbuff.data), (sockaddr*)&g_toaddr);
 
 }
 
