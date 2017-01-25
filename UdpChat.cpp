@@ -101,6 +101,8 @@ BOOL CALLBACK DialogProc(	HWND hwndDlg,		// handle to dialog box
 						EnableWindow(GetDlgItem(hwndDlg, IDC_SERVERPORT), false);
 						EnableWindow(GetDlgItem(hwndDlg, IDC_NAME), false);
 
+						EnableWindow(GetDlgItem(hwndDlg, IDC_MESSAGELIST), true);
+
 						char txt[256];
 
 						gethostname(txt, (int)sizeof(txt));
@@ -108,7 +110,7 @@ BOOL CALLBACK DialogProc(	HWND hwndDlg,		// handle to dialog box
 						IN_ADDR inaddr;
 						memcpy(&inaddr, lpHost->h_addr_list[0], 4);
 
-						sprintf_s(txt, "Started Server on IP: %s / PORT: %s", inet_ntoa(inaddr), port);
+						sprintf_s(txt, "SYSTEM: Started Server on IP: %s / PORT: %s", inet_ntoa(inaddr), port);
 						SendMessage(GetDlgItem(hwndDlg, IDC_MESSAGELIST), LB_INSERTSTRING, (WPARAM)0, (LPARAM)txt);
 					}
 				}

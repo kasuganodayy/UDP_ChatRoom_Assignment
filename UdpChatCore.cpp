@@ -40,8 +40,10 @@ sockaddr_in g_toaddr;
 int g_myUserId;
 
 thread g_recvThread;
-
 bool g_mainloop;
+
+bool g_serverFlag = false;
+char g_sysTxt[256];
 
 //メッセージ保存用可変長配列
 list<LPChatBuffer> g_messages;
@@ -49,7 +51,9 @@ list<LPChatBuffer> g_messages;
 ChatMsgData g_sendbuff;
 
 // UserID -> name table
-map <int, string> userTable;
+map <int, string> g_userTable;
+
+list<sockaddr_in> g_connectedAddr;
 
 
 //--------------------------------
@@ -63,13 +67,14 @@ void setMessageToBuffer(LPChatMsgData msg, LPChatBuffer buffer);
 void makeChatString(LPChatBuffer buffer, int userId, char* message);
 void makeChatString(LPChatBuffer buffer, char* name, char* message);
 void insertData(LPChatBuffer chat_buff);
+void insertData(char* string);
 void deleteChatData(LPChatBuffer buffer);
 void requestLogin(char* name);
 
 
 bool initUdpChatSystem(HWND hwnd, char* ip, char* port)
 {
-	bool serverFlag = (ip ? false : true);
+	g_serverFlag = (ip ? false : true);
 
 	unsigned short portNo;
 
@@ -82,7 +87,7 @@ bool initUdpChatSystem(HWND hwnd, char* ip, char* port)
 
 	if (g_mysock != INVALID_SOCKET)
 	{
-		if (serverFlag)
+		if (g_serverFlag)
 		{
 			setAddressToSockAddrIn(&g_myaddr, INADDR_ANY, portNo);
 			setAddressToSockAddrIn(&g_toaddr, INADDR_ANY, portNo);
@@ -107,7 +112,7 @@ bool initUdpChatSystem(HWND hwnd, char* ip, char* port)
 
 void destructUdpChatSystem()
 {
-	userTable.clear();
+	g_userTable.clear();
 
 	if (g_mainloop)
 	{
@@ -200,10 +205,12 @@ void insertMyData(char* my_message)
 
 void insertData(LPChatBuffer chat_buff)
 {
-	//ToDo: GUI更新処理
-	// 受信したチャットデータをListBoxに追加。
-	// ListBox等の細かい制御はSendMessageで行う。
 	SendMessage(GetDlgItem(g_hwnd, IDC_MESSAGELIST), LB_INSERTSTRING, (WPARAM)0, (LPARAM)chat_buff->chat_string);
+}
+
+void insertData(char* string)
+{
+	SendMessage(GetDlgItem(g_hwnd, IDC_MESSAGELIST), LB_INSERTSTRING, (WPARAM)0, (LPARAM)string);
 }
 
 void recvThread_Server(void)
@@ -231,6 +238,20 @@ void recvThread_Server(void)
 
 			insertData(message_data);
 			deleteChatData(message_data);
+
+			// Send msg to all connected users
+			{
+				g_sendbuff.msg.Header.type = MSGTYPE_CHAT;
+				strcpy(g_sendbuff.msg.ChatBody.name, g_userTable.at(recvbuff.msg.ChatBody.userId).c_str());
+
+				strcpy(g_sendbuff.msg.ChatBody.message, recvbuff.msg.ChatBody.message);
+
+				list<sockaddr_in>::iterator i;
+				for (i = g_connectedAddr.begin(); i != g_connectedAddr.end(); i++)
+				{
+					sendDataTo(g_mysock, g_sendbuff.data, sizeof(g_sendbuff.data), (sockaddr*)&(*i));
+				}
+			}
 			break;
 
 		case SRVTYPE_LOGIN:
@@ -244,7 +265,7 @@ void recvThread_Server(void)
 			else
 			{
 				int tempID = rand();
-				while (userTable.find(tempID) != userTable.end())
+				while (g_userTable.find(tempID) != g_userTable.end())
 				{
 					static short userGenCount = 0;
 
@@ -257,6 +278,18 @@ void recvThread_Server(void)
 
 					tempID = rand();
 					userGenCount++;
+				}
+
+				if (tempID != -1)
+				{
+					// Accept Login
+					// Insert to userTable
+					g_userTable.insert(pair<int, string>(tempID, string(recvbuff.msg.Login.name)));
+					// Insert to connectAddr list
+					g_connectedAddr.push_back(fromaddr);
+
+					sprintf_s(g_sysTxt, "SYSTEM: User %d logged in with name \"%s\".", tempID, recvbuff.msg.Login.name);
+					insertData(g_sysTxt);
 				}
 
 				g_sendbuff.msg.AcceptBody.userId = tempID;
@@ -307,9 +340,8 @@ void recvThread_Client(void)
 				// Login rejected
 				g_mainloop = false;
 
-				char errTxt[256];
-				sprintf_s(errTxt, "ERROR: %s", recvBuff.msg.ChatBody.message);
-				SendMessage(GetDlgItem(g_hwnd, IDC_MESSAGELIST), LB_INSERTSTRING, (WPARAM)0, (LPARAM)errTxt);
+				sprintf_s(g_sysTxt, "ERROR: %s", recvBuff.msg.ChatBody.message);
+				insertData(g_sysTxt);
 
 				if (g_recvThread.joinable())
 					g_recvThread.join();
@@ -318,9 +350,16 @@ void recvThread_Client(void)
 			{
 				EnableWindow(GetDlgItem(g_hwnd, IDC_SRVSTART), false);
 				EnableWindow(GetDlgItem(g_hwnd, IDSTART), false);
+				EnableWindow(GetDlgItem(g_hwnd, IDC_SRVMODEPORT), false);
+				EnableWindow(GetDlgItem(g_hwnd, IDC_SERVERIP), false);
+				EnableWindow(GetDlgItem(g_hwnd, IDC_SERVERPORT), false);
+				EnableWindow(GetDlgItem(g_hwnd, IDC_NAME), false);
 				EnableWindow(GetDlgItem(g_hwnd, IDC_CHATINPUT), true);
 				EnableWindow(GetDlgItem(g_hwnd, IDC_MESSAGELIST), true);
 				EnableWindow(GetDlgItem(g_hwnd, IDC_SEND), true);
+
+				sprintf_s(g_sysTxt, "System: Logged in with UserID \" %d \" ", g_myUserId);
+				insertData(g_sysTxt);
 			}
 			break;
 		}
@@ -362,11 +401,11 @@ void sendChatMessage(char* chat)
 	SrvMsg sendbuff;
 	// Send chatBuffer as chatMode
 	sendbuff.msg.Header.type = SRVTYPE_CHAT;
+	sendbuff.msg.ChatBody.userId = g_myUserId;
 	// Copy content
 	strcpy_s(sendbuff.msg.ChatBody.message, CHAT_LENGTH, chat);
-
+	// Send content
 	sendDataTo(g_mysock, sendbuff.data, sizeof(sendbuff.data), (sockaddr*)&g_toaddr);
-
 }
 
 void requestLogin(char* name)
