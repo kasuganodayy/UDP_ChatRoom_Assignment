@@ -134,6 +134,10 @@ void destructUdpChatSystem()
 
 bool initWinSockSystem()
 {
+	if (g_mysock != NULL)
+	{
+		WinSockClose();
+	}
 	g_mysock = INVALID_SOCKET;
 	g_mainloop = false;
 	
@@ -394,6 +398,17 @@ void recvThread_Client(void)
 
 		case MSGTYPE_SRVSTOP:
 			MessageBox(g_hwnd, "Server has shut down.", "Error", MB_OK);
+			g_mainloop = false;
+
+			EnableWindow(GetDlgItem(g_hwnd, IDC_SRVSTART), true);
+			EnableWindow(GetDlgItem(g_hwnd, IDSTART), true);
+			EnableWindow(GetDlgItem(g_hwnd, IDC_SRVMODEPORT), true);
+			EnableWindow(GetDlgItem(g_hwnd, IDC_SERVERIP), true);
+			EnableWindow(GetDlgItem(g_hwnd, IDC_SERVERPORT), true);
+			EnableWindow(GetDlgItem(g_hwnd, IDC_NAME), true);
+			EnableWindow(GetDlgItem(g_hwnd, IDC_CHATINPUT), false);
+			EnableWindow(GetDlgItem(g_hwnd, IDC_MESSAGELIST), false);
+			EnableWindow(GetDlgItem(g_hwnd, IDC_SEND), false);
 			break;
 		}
 	}
@@ -410,6 +425,11 @@ bool startUdpChat_Server(void)
 
 bool startUdpChat_Client(char* name)
 {
+	if (g_recvThread.joinable())
+	{
+		g_recvThread.join();
+	}
+
 	// チャットの起動
 	if (strlen(name) > NAME_LENGTH)
 	{
