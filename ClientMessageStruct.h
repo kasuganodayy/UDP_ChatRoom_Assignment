@@ -9,7 +9,7 @@
 #define MSGTYPE_LOGIN	1		//ログイン通知
 #define MSGTYPE_LOGOUT	2		//ログアウト通知
 #define MSGTYPE_ACCEPT  3		//ログインOK
-#define MSGTYPE_SRVENUM  4		//サーバ列挙応答（未実装）
+#define MSGTYPE_LOGOUT_ACCEPT  4
 #define MSGTYPE_SRVSTOP 255		//サーバ停止メッセージ
 
 typedef struct _MSGHEADER		//クライアント側　受信　メッセージヘッダ

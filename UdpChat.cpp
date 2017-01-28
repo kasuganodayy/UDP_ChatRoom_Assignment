@@ -158,18 +158,16 @@ BOOL CALLBACK DialogProc(	HWND hwndDlg,		// handle to dialog box
 			case IDEXIT:
 				if (BN_CLICKED == HIWORD(wParam))
 				{
+					endUdpChat();
 					EndDialog(hwndDlg, IDEXIT);
-					destructUdpChatSystem();
-					destructWinSockSystem();
 				}
 				break;
 			}
 			return true;
 
 		case WM_CLOSE:
+			endUdpChat();
 			EndDialog(hwndDlg,IDEXIT);
-			destructUdpChatSystem();
-			destructWinSockSystem();
 			return true;
 
 	}

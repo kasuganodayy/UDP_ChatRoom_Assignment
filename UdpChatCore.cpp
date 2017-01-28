@@ -9,6 +9,7 @@
 
 #include <list>
 #include <map>
+#include <exception>
 
 using namespace std;
 
@@ -33,27 +34,26 @@ using namespace std;
 //--------------------------------
 // グローバル変数
 //--------------------------------
-HWND g_hwnd;
-SOCKET g_mysock;
+HWND		g_hwnd;
+SOCKET		g_mysock;
 sockaddr_in g_myaddr;
 sockaddr_in g_toaddr;
-int g_myUserId;
+int			g_myUserId;
 
-thread g_recvThread;
-bool g_mainloop;
+thread		g_recvThread;
+bool		g_mainloop;
 
-bool g_serverFlag = false;
-char g_sysTxt[256];
-
-//メッセージ保存用可変長配列
-list<LPChatBuffer> g_messages;
-
+bool		g_serverFlag = false;
+char		g_sysTxt[256];
 ChatMsgData g_sendbuff;
 
-// UserID -> name table
-map <int, string> g_userTable;
+//メッセージ保存用可変長配列
+list<LPChatBuffer>		g_messages;
 
-list<sockaddr_in> g_connectedAddr;
+map <int, string>		g_userTable;		// UserID -> name table
+map <int, sockaddr_in>	g_connectedTable;	// UserID -> sockaddr_in
+
+string					g_logoutNameBuff;
 
 
 //--------------------------------
@@ -90,7 +90,6 @@ bool initUdpChatSystem(HWND hwnd, char* ip, char* port)
 		if (g_serverFlag)
 		{
 			setAddressToSockAddrIn(&g_myaddr, INADDR_ANY, portNo);
-			setAddressToSockAddrIn(&g_toaddr, INADDR_ANY, portNo);
 
 			if (bindToSocket(g_mysock, &g_myaddr))
 			{
@@ -103,7 +102,6 @@ bool initUdpChatSystem(HWND hwnd, char* ip, char* port)
 
 			return true;
 		}
-		//setAddressToSockAddrIn(&g_toaddr, INADDR_BROADCAST, portNo);
 
 	}
 		
@@ -112,12 +110,18 @@ bool initUdpChatSystem(HWND hwnd, char* ip, char* port)
 
 void destructUdpChatSystem()
 {
-	g_userTable.clear();
-
 	if (g_mainloop)
 	{
 		g_mainloop = false;
-		insertMyData("退室しました。");
+
+		if (g_serverFlag)
+		{
+			g_userTable.clear();
+		}
+		else
+		{
+			insertMyData("退室しました。");
+		}
 	}
 
 	closeSocket(&g_mysock);
@@ -240,16 +244,28 @@ void recvThread_Server(void)
 			deleteChatData(message_data);
 
 			// Send msg to all connected users
+			if(!g_connectedTable.empty())
 			{
 				g_sendbuff.msg.Header.type = MSGTYPE_CHAT;
-				strcpy(g_sendbuff.msg.ChatBody.name, g_userTable.at(recvbuff.msg.ChatBody.userId).c_str());
+				try
+				{
+					strcpy(g_sendbuff.msg.ChatBody.name, g_userTable.at(recvbuff.msg.ChatBody.userId).c_str());
+				}
+				catch (exception ex)
+				{
+					if (!strcmp(ex.what(), "invalid map<K, T> key"))
+					{
+						strcpy(g_sendbuff.msg.ChatBody.name, g_logoutNameBuff.c_str());
+					}
+				}
 
 				strcpy(g_sendbuff.msg.ChatBody.message, recvbuff.msg.ChatBody.message);
 
-				list<sockaddr_in>::iterator i;
-				for (i = g_connectedAddr.begin(); i != g_connectedAddr.end(); i++)
+				for (map<int, sockaddr_in>::iterator i = g_connectedTable.begin();
+					i != g_connectedTable.end();
+					++i)
 				{
-					sendDataTo(g_mysock, g_sendbuff.data, sizeof(g_sendbuff.data), (sockaddr*)&(*i));
+					sendDataTo(g_mysock, g_sendbuff.data, sizeof(g_sendbuff.data), (sockaddr*)&(i->second));
 				}
 			}
 			break;
@@ -286,7 +302,7 @@ void recvThread_Server(void)
 					// Insert to userTable
 					g_userTable.insert(pair<int, string>(tempID, string(recvbuff.msg.Login.name)));
 					// Insert to connectAddr list
-					g_connectedAddr.push_back(fromaddr);
+					g_connectedTable.insert(pair<int, sockaddr_in>(tempID, fromaddr));
 
 					sprintf_s(g_sysTxt, "SYSTEM: User %d logged in with name \"%s\".", tempID, recvbuff.msg.Login.name);
 					insertData(g_sysTxt);
@@ -299,6 +315,16 @@ void recvThread_Server(void)
 			break;
 
 		case SRVTYPE_LOGOUT:
+			if (recvbuff.msg.Logout.userId != -1)
+			{
+				g_logoutNameBuff = g_userTable.at(recvbuff.msg.Logout.userId);
+
+				g_userTable.erase(recvbuff.msg.Logout.userId);
+				g_connectedTable.erase(recvbuff.msg.Logout.userId);
+
+				g_sendbuff.msg.Header.type = MSGTYPE_LOGOUT_ACCEPT;
+				sendDataTo(g_mysock, g_sendbuff.data, sizeof(g_sendbuff.data), (sockaddr*)&fromaddr);
+			}
 			break;
 
 		default:
@@ -362,6 +388,13 @@ void recvThread_Client(void)
 				insertData(g_sysTxt);
 			}
 			break;
+
+		case MSGTYPE_LOGOUT_ACCEPT:
+			break;
+
+		case MSGTYPE_SRVSTOP:
+			MessageBox(g_hwnd, "Server has shut down.", "Error", MB_OK);
+			break;
 		}
 	}
 }
@@ -416,4 +449,38 @@ void requestLogin(char* name)
 	strcpy(loginMsg.msg.Login.name, name);
 
 	sendDataTo(g_mysock, loginMsg.data, sizeof(loginMsg.data), (sockaddr*)&g_toaddr);
+}
+
+void endUdpChat(void)
+{
+	if (g_mysock != NULL)
+	{
+		if (g_serverFlag)
+		{
+			// Send msg to all connected users
+			if (!g_connectedTable.empty())
+			{
+				g_sendbuff.msg.Header.type = MSGTYPE_SRVSTOP;
+
+				for (map<int, sockaddr_in>::iterator i = g_connectedTable.begin();
+					i != g_connectedTable.end();
+					++i)
+				{
+					sendDataTo(g_mysock, g_sendbuff.data, sizeof(g_sendbuff.data), (sockaddr*)&(i->second));
+				}
+			}
+		}
+		else
+		{
+			SrvMsg logoutMsg;
+
+			logoutMsg.msg.Header.type = SRVTYPE_LOGOUT;
+			logoutMsg.msg.Logout.userId = g_myUserId;
+
+			sendDataTo(g_mysock, logoutMsg.data, sizeof(logoutMsg.data), (sockaddr*)&g_toaddr);
+		}
+	}
+
+	destructUdpChatSystem();
+	destructWinSockSystem();
 }
